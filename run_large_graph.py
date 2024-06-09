@@ -283,7 +283,8 @@ if args.dataset =="ogbl-citation2":
         v=split_edge[name]["target_node"]
         split_edge[name]['edge']=torch.stack((u,v),dim=0).t()
 
-
+valid_list=[]
+test_list=[]
 
 best_test_results = 0
 for epoch in range(args.epochs):
@@ -320,8 +321,6 @@ for epoch in range(args.epochs):
     pred.train()
     model.train()
     results = []
-    valid_list=[]
-    test_list=[]
     for step, edge_index in enumerate(tqdm.tqdm(dataloader)):
         x = g.ndata["feat"]
         if args.dataset=="ogbl-citation2":
@@ -481,7 +480,7 @@ for epoch in range(args.epochs):
                 if test_hits20 > best_test_results:
                     best_test_results = test_hits20
 
-                if epoch - best_epoch > 50:
+                if epoch - best_epoch > 100:
                     break
                 
             elif dataset.name == 'ogbl-ppa':
@@ -511,8 +510,8 @@ for epoch in range(args.epochs):
                 if test_hits50 > best_test_results:
                     best_test_results = test_hits50
 
-                # if epoch - best_epoch > 100:
-                #     # break
+                if epoch - best_epoch > 200:
+                    break
 
             if dataset.name == 'ogbl-ddi':
                 print('epoch: {}, dev_hits20: {}, test_hits20: {}, loss: {}'.format(epoch, dev_hits20, test_hits20, loss))
@@ -534,6 +533,7 @@ test_list=np.array(test_list)
 index=np.argmax(valid_list)
 valid_res=valid_list[index]
 test_res=test_list[index]
+
 if args.dataset=="ogbl-citation2":
     print('Final Valid_MRR: {}, Test_MRR: {}'.format(valid_res, test_res))
     
@@ -552,8 +552,14 @@ elif args.dataset == 'ogbl-ddi' and args.wandb:
         "best_test_hits20": best_test_hits20,
         "best_test_results": best_test_results
     })            
-        
+
 else:
 
     print('Final Valid_Hits: {}, Test_Hits: {}'.format(valid_res, test_res))
+
+with open('result.txt', 'a') as f:
+    f.write('Final Valid_Hits: {}, Test_Hits: {}\n'.format(valid_res, test_res))
+f.close()
+
+
     

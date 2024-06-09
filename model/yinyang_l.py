@@ -72,12 +72,12 @@ class Propagate(nn.Module):
         if g_list:
             D_0 = D_list[0]
             D_1 = th.sum(th.stack(D_list[1:],dim=-1),dim=-1)
-            Y_new = Y - alp * ( lam0 * (Y-X) / (D_0 + D_1) + lam * (Y - normalized_AX(graph[0], Y)))
+            Y_new = Y - alp * ( lam0 * (Y) / (D_0 + D_1) + lam * (Y - normalized_AX(graph[0], Y)))
             for i in range(len(graph[1])):
                 Y_new = Y_new + alp * th.sigmoid(lam_K[i]) * 1/K  * (Y - normalized_AX(graph[1][i], Y, D_1))
             return Y_new
         else:
-            return Y - alp * ( lam0 * (Y-X) / D_list[0]  + lam * (Y - normalized_AX(graph, Y)))
+            return Y - alp * ( lam0 * (Y) / D_list[0]  + lam * (Y - normalized_AX(graph, Y)))
 
 class UnfoldindAndAttention_l(nn.Module):
     def __init__(self,args, attn_aft, swish, T, p, use_eta, init_att , attn_dropout, precond):

@@ -54,22 +54,26 @@ class Propagate(nn.Module):
 
     def prop(self, graph, Y, lam):
 
-        Y = D_power_bias_X(graph, Y, -0.5, lam, 1 - lam)
-        Y = AX(graph, Y)
-        Y = D_power_bias_X(graph, Y, -0.5, lam, 1 - lam)
+        #Y = D_power_bias_X(graph, Y, -0.5, lam, 1 - lam)
+        #Y = AX(graph, Y)
+        #Y = D_power_bias_X(graph, Y, -0.5, lam, 1 - lam)
         return Y
 
-    def forward(self, graph, Y, X, alp, lam0, lam, lam_K, K, g_list, D_list):
+    def forward(self, graph, Y, X, alp, lam0, lam, lam_K, K, g_list, D_list, c1 = 1, c2 =  1, c3 = 1, c4 = 1):
         if g_list:
             D_0, D_1 = D_list[0], D_list[1]
             assert Y.shape[0] == normalized_AX(graph[0], X).shape[0]
             assert Y.shape[0] == normalized_AX(graph[1], X).shape[0]
-            Y_new = Y - alp * ( lam0 * (Y - X) / (D_0 + D_1) + lam * (Y - normalized_AX(graph[0], Y))- lam_K * 1/K * (Y - normalized_AX(graph[1], Y)))
-            # Y_new = Y - alp * ( lam0 * (Y - X) + lam * (Y - normalized_AX(graph[0], Y))- lam_K * 1/K * (Y - normalized_AX(graph[1], Y)))
+            #print(c1, c2, c3, c4, flush = True)
+            Y_new =  c1 * (Y - alp * lam0 * Y / (D_0 + D_1) + lam* Y - lam_K * 1/K * Y) \
+                   + c2 * (alp * lam0 * X) + c3 * (-lam * normalized_AX(graph[0], Y)) + c4 * (lam_K * 1/K * normalized_AX(graph[1], Y))
+            # Y_new = Y - alp * ( lam0 * (Y - X) / (D_0 + D_1) + lam * (Y - normalized_AX(graph[0], Y))- lam_K * 1/K * (Y - normalized_AX(graph[1], Y)))
             return Y_new
         else:
             D_0 = D_list[0]
-            return Y - alp * ( lam0 * (Y - X) / (D_0) + lam * (Y - normalized_AX(graph, Y)))
+            assert Y.shape[0] == normalized_AX(graph, X).shape[0]
+            Y_new =  c1 * (Y - alp * lam0 * Y / (D_0) + lam * Y) + c2 * (alp * lam0 * X) + c3 * (-lam * normalized_AX(graph, Y)) 
+            return Y_new
 
 class UnfoldindAndAttention(nn.Module):
     def __init__(self,args, attn_aft, swish, T, p, use_eta, init_att , attn_dropout, precond):
@@ -88,6 +92,10 @@ class UnfoldindAndAttention(nn.Module):
         self.lam0 = args.lam0
         self.K = args.K
         self.lam_K = args.lam_K
+        self.c1 = args.c1
+        self.c2 = args.c2
+        self.c3 = args.c3
+        self.c4 = args.c4
         
         self.gamma       = args.gamma
         prop_method      = Propagate 
@@ -126,7 +134,7 @@ class UnfoldindAndAttention(nn.Module):
             D_0, D_1 = getgraphdegree(g), 0 
         for k, layer in enumerate(self.prop_layers):
             
-            Y = layer(g, Y, Y0, self.alp, self.lam0, self.lam, self.lam_K, self.K,g_list, [D_0, D_1])
+            Y = layer(g, Y, Y0, self.alp, self.lam0, self.lam, self.lam_K, self.K,g_list, [D_0, D_1], self.c1, self.c2, self.c3, self.c4)
             # add dropout
 
             # if self.init_att:
@@ -135,7 +143,7 @@ class UnfoldindAndAttention(nn.Module):
         # import ipdb
         # ipdb.set_trace()
         return Y
-    def compute_E0(self,Y,Y0):
+    '''def compute_E0(self,Y,Y0):
         return th.norm(Y-Y0)**2
     def compute_E1(self,g,Y):
         u,v=g.edges()
@@ -148,6 +156,6 @@ class UnfoldindAndAttention(nn.Module):
         Yu=Y[u]
         Yv=Y[v]
         
-        return ((Yu-Yv)**2).sum(dim=-1)
+        return ((Yu-Yv)**2).sum(dim=-1)'''
 
    

@@ -7,15 +7,13 @@ import scipy.sparse as sp
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from ogb.linkproppred import DglLinkPropPredDataset, Evaluator
+from ogb.linkproppred import  Evaluator
 from dgl.dataloading.negative_sampler import Uniform
-import datasets
 import dgl.data
 import random
 from small_graph_parser import parse
 args = parse()
 # random seed
-
 seed = args.seed
 torch.manual_seed(seed)
 torch.cuda.manual_seed_all(seed)
@@ -25,6 +23,24 @@ torch.backends.cudnn.deterministic = True
 torch.use_deterministic_algorithms = True
 torch.cuda.current_device()
 torch.cuda._initialized = True
+class MLP1(nn.Module):
+    def __init__(self, args, input_dim, hidden_dim, output_dim):
+        super().__init__()
+        self.linears = nn.ModuleList()
+        # two-layer MLP
+        self.linears.append(nn.Linear(input_dim, hidden_dim, bias=False))
+        self.linears.append(nn.Linear(hidden_dim, output_dim, bias=False))
+        self.batch_norm = nn.BatchNorm1d(hidden_dim)
+        self.dropout = args.dropout
+
+    def forward(self, x):
+        h = x
+        h = self.linears[0](h)
+        h = self.batch_norm(h)
+        h = F.dropout(h, self.dropout, training=self.training)
+        h = F.relu(h)
+        h = self.linears[1](h)
+        return h
 
 # load dataset
 if args.dataset == 'cora':
@@ -122,6 +138,7 @@ class MLPPredictor(nn.Module):
         with g.local_scope():
             g.ndata["h"] = h
             g.apply_edges(self.apply_edges)
+            print(g.edata["score"])
             return g.edata["score"]
 
 
@@ -285,6 +302,71 @@ class MLP(nn.Module):
         h = self.linear2(h)
         return h 
 
+device = torch.device('cuda', args.gpu) if torch.cuda.is_available() else torch.device('cpu')
+train_pos_g=train_pos_g.to(device)
+train_neg_g=train_neg_g.to(device)
+valid_pos_g=valid_pos_g.to(device)
+valid_neg_g=valid_neg_g.to(device)
+test_pos_g=test_pos_g.to(device)
+test_neg_g=test_neg_g.to(device)
+train_g=train_g.to(device)
+valid_g=valid_g.to(device)
+
+train_g.ndata["deg"]  = train_g.in_degrees().float()
+train_g.edata["w"]    = torch.ones(train_g.number_of_edges(), 1, device = train_g.device)
+
+def normalized_AX(graph, X):
+    """Y = D^{-1/2}AD^{-1/2}X"""
+    Y = D_power_X(graph, X, -0.5)  # Y = D^{-1/2}X
+    Y = AX(graph, Y)  # YF = AD^{-1/2}X
+    Y = D_power_X(graph, Y, -0.5)  # Y = D^{-1/2}AD^{-1/2}X
+    return Y
+
+def AX(graph, X):
+    """Y = AX"""
+    graph.srcdata["h"] = X
+    graph.update_all(
+        fn.u_mul_e("h", "w", "m"), fn.sum("m", "h"),
+    )
+    Y = graph.dstdata["h"]
+    return Y
+
+def D_power_X(graph, X, power):
+    """Y = D^{power}X"""
+    degs = graph.ndata["deg"]
+    norm = torch.pow(degs, power)
+    norm[norm == float('inf')] = 0
+    norm[norm == float('-inf')] = 0 
+    Y = X * norm.view(X.size(0), 1)
+    return Y
+
+def D_power_bias_X(graph, X, power, coeff, bias):
+    """Y = (coeff*D + bias*I)^{power} X"""
+    degs = graph.ndata["deg"]
+    degs = coeff * degs + bias
+    norm = torch.pow(degs, power)
+    Y = X * norm.view(X.size(0), 1)
+    return Y
+
+def getgraphdegree(graph):
+    degs = graph.ndata["deg"]
+    return degs.view(-1, 1)
+
+class Mine(nn.Module):
+    def __init__(self, in_size, h_size, graph):
+        super(Mine, self).__init__() 
+        self.mlp = MLP1(args, in_size, h_size, h_size)
+        self.graph = graph
+        self.conv1 = GraphConv(in_size, h_size, bias = True, weight = True)
+        self.conv2 = GraphConv(h_size, h_size, bias = True, weight = True)
+        
+    def forward(self, in_feat):
+        #x = self.mlp(in_feat)
+        x = self.conv1(self.graph, in_feat) 
+        x = F.relu(x)
+        x = self.conv2(self.graph, x) 
+        return x
+
 
         
 drop_out = nn.Dropout(p=0.5)
@@ -311,6 +393,8 @@ elif args.model == 'node2vec':
     model = MLP(in_feats = in_feat.shape[1], h_feats = args.hidden)
 elif args.model == 'MF':
     emb = torch.nn.Embedding(g.num_nodes(), args.hidden)
+elif args.model == 'mine':
+    model = Mine(train_g.ndata['feat'].shape[1], args.hidden, train_g)
 else:
     raise NotImplementedError
     
@@ -323,7 +407,7 @@ elif args.score_func == 'dist':
     pred = DistPredictor(args.hidden)
 
 device = torch.device('cuda', args.gpu) if torch.cuda.is_available() else torch.device('cpu')
-# device="cpu"
+#device ="cpu"
 if args.model != 'MF':
     model = model.to(device)
 else: 
@@ -342,6 +426,31 @@ if args.model == 'MF':
 else:
     optimizer = torch.optim.Adam(itertools.chain(model.parameters(), pred.parameters()), lr=args.lr)
 
+'''class cal_cn():
+    def __init__(self, g):
+        self.neighbour = [set(g.successors(i.item()).tolist()) for i in g.nodes()]
+
+    def apply_edges(self, edges):
+        def help(u, v):
+            
+            neighbors_u = self.neighbour[u]
+            neighbors_v = self.neighbour[v]
+
+            # Calculate the intersection of the two sets
+            common_neighbors = neighbors_u.intersection(neighbors_v)
+            return len(common_neighbors)
+
+
+        return torch.tensor([help(edges[0][i].item(), edges[1][i].item()) for i in range(len(edges[0]))], dtype = torch.float, device = 'cuda')
+
+edges = g.edges()
+cn_0 = cal_cn(g)
+edges_pos = train_pos_g.edges()
+edges_valid = valid_pos_g.edges()
+edges_test = test_pos_g.edges()
+cn_pos = cn_0.apply_edges(edges_pos) 
+cn_valid = cn_0.apply_edges(edges_valid)
+cn_test = cn_0.apply_edges(edges_test)'''
 
 # ----------- 4. training -------------------------------- #
 
@@ -350,6 +459,9 @@ best_model = None
 best_epoch = 0
 best_dev_auc = 0.0
 best_dev_hits100 = 0.0
+#best_dev_loss = 10e20
+
+#print(train_g.ndata["feat"], flush = True)
 
 from sklearn.metrics import roc_auc_score
 
@@ -374,6 +486,9 @@ for epoch in range(1000):
         neg_train_g = dgl.graph(sampler, device="cpu")
         neg_train_g = dgl.to_bidirected(neg_train_g, copy_ndata=True).to(device)
         h = model(pos_g=train_g, neg_g=neg_train_g, in_feat=train_g.ndata["feat"].to(device))
+    elif args.model == 'mine':
+        h = model(in_feat = train_g.ndata['feat'])
+
     else:
         h = model(g = train_g, in_feat = train_g.ndata["feat"]).to(device)
 
@@ -386,9 +501,14 @@ for epoch in range(1000):
         train_neg_g = dgl.graph((train_neg_u, train_neg_v), num_nodes=g.number_of_nodes()).to(device)
         neg_score = pred(train_neg_g, h)
 
+
+    # print(pos_score, cn, flush = True)
+    #loss = nn.MSELoss()(pos_score, cn_pos)
     loss = compute_loss(pos_score, neg_score)
+    #print(loss, flush = True)
     # loss = compute_loss_no_sigmoid(pos_score, neg_score)
     # loss = compute_loss_log_sigmoid(pos_score, neg_score, 12)
+
 
     # backward
     optimizer.zero_grad()
@@ -402,6 +522,7 @@ for epoch in range(1000):
         dev_hits100 = compute_hr(pos_score, neg_score, 100)
         # dev_hits100 = compute_hr(pos_score, neg_score, 20)
         # dev_auc = compute_auc(pos_score, neg_score)
+        #newloss = nn.MSELoss()(pos_score, cn_valid)
 
         if metric == 'hits@k' and dev_hits100 > best_dev_hits100:
             best_dev_hits100 = dev_hits100
@@ -415,13 +536,18 @@ for epoch in range(1000):
         if metric == 'auc' and dev_auc > best_dev_auc:
             best_dev_auc = dev_auc
             best_model = model.state_dict()
-            best_epoch = epoch
+            best_epoch = epoch 
 
+
+        '''if best_dev_loss > newloss:
+            best_dev_loss = newloss
+            best_model = model.state_dict()
+            best_epoch = epoch'''
+        
         if epoch - best_epoch >= 100:
             break
-
-        # print('epoch: {}, dev_hits100: {}, loss: {}'.format(epoch, dev_hits100, loss))
         print('epoch: {}, dev_hits100: {}, loss: {}'.format(epoch, dev_hits100, loss))
+        #print('epoch: {}, dev_hits100: {}, loss: {}, newloss: {}'.format(epoch, dev_hits100, loss, newloss))
 
 if metric == 'hits@k':
     print('best epoch: {}, best_dev_hits100: {}'.format(best_epoch, best_dev_hits100))
@@ -457,6 +583,9 @@ with torch.no_grad():
         neg_valid_g = dgl.graph(sampler, device="cpu")
         neg_valid_g = dgl.to_bidirected(neg_valid_g, copy_ndata=True).to(device)
         inference_h = model(pos_g = valid_g, neg_g = neg_valid_g, in_feat = valid_g.ndata["feat"].to(device))
+    elif args.model == 'mine':
+        model.load_state_dict(best_model)
+        inference_h = model(in_feat = train_g.ndata["feat"].to(device))
     else:
         model.load_state_dict(best_model)
         inference_h = model(g = valid_g, in_feat = train_g.ndata["feat"].to(device))
@@ -464,10 +593,13 @@ with torch.no_grad():
     pos_score = pred(test_pos_g, inference_h)
     neg_score = pred(test_neg_g, inference_h)
 
+    #print("MSELoss", nn.MSELoss()(pos_score, cn_test).item())
+
     # print("AUC", compute_auc(pos_score, neg_score))
     print("hits100", compute_hr(pos_score, neg_score, 100))
     # print("hits100", compute_hr(pos_score, neg_score, 20))
+    print(args.seed)
 
-
-
-
+with open('results.txt', 'w') as f:
+    f.write('hit100 {}\n'.format(compute_hr(pos_score, neg_score, 100)))
+f.close()

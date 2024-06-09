@@ -27,6 +27,10 @@ def parse():
     parser.add_argument("--uniform", default=False, action='store_true')
     parser.add_argument("--learnable", default=False, action='store_true')
     parser.add_argument("--split_negs", default=False, action='store_true')
+    parser.add_argument("--c1", default=1, type=int)
+    parser.add_argument("--c2", default=1, type=int)
+    parser.add_argument("--c3", default=1, type=int)
+    parser.add_argument("--c4", default=1, type=int)
     
     args = parser.parse_args()
     args.mlp = not args.nomlp
