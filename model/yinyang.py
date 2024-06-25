@@ -63,16 +63,17 @@ class Propagate(nn.Module):
         if g_list:
             D_0, D_1 = D_list[0], D_list[1]
             #print(c1, c2, c3, c4, flush = True)
-            noise = th.normal(mean = 0.0, std = sigma, size = Y.shape[0]).to(Y.device)
+            noise = th.normal(mean = 0.0, std = sigma, size = Y.size()).to(Y.device)
             
-            Y_new =  c1 * (Y - alp * lam0 * Y / (D_0 + D_1) + lam* Y - lam_K * 1/K * Y) \
-                   + c2 * (alp * lam0 * X) + c3 * (-lam * normalized_AX(graph[0], Y)) + c4 * (lam_K * 1/K * normalized_AX(graph[1], Y)) \
+            Y_new =  c1 * (Y - alp * lam0 * Y / (D_0 + D_1) - alp * lam* Y + alp * lam_K * 1/K * Y) \
+                   + c2 * (alp * lam0 * X / (D_0 + D_1)) + c3 * (alp * lam * normalized_AX(graph[0], Y)) + c4 * (-alp * lam_K * 1/K * normalized_AX(graph[1], Y)) \
                    + c5 * noise
             # Y_new = Y - alp * ( lam0 * (Y - X) / (D_0 + D_1) + lam * (Y - normalized_AX(graph[0], Y))- lam_K * 1/K * (Y - normalized_AX(graph[1], Y)))
             return Y_new
         else:
+            noise = th.normal(mean = 0.0, std = sigma, size = Y.size()).to(Y.device)
             D_0 = D_list[0]
-            Y_new =  c1 * (Y - alp * lam0 * Y / (D_0) + lam * Y) + c2 * (alp * lam0 * X) + c3 * (-lam * normalized_AX(graph, Y)) 
+            Y_new =  c1 * (Y - alp * lam0 * Y / (D_0) - alp * lam * Y) + c2 * (alp * lam0 * X / D_0) + c3 * (alp * lam * normalized_AX(graph, Y)) + c5 * noise
             return Y_new
 
 class UnfoldindAndAttention(nn.Module):
