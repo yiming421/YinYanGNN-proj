@@ -510,7 +510,7 @@ for epoch in range(args.epochs):
                 if test_hits50 > best_test_results:
                     best_test_results = test_hits50
 
-                if epoch - best_epoch > 200:
+                if epoch - best_epoch > 100:
                     break
 
             if dataset.name == 'ogbl-ddi':
