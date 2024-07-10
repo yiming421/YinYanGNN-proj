@@ -14,3 +14,11 @@ The whole environment is in requirements.txt. It's highly recommended to mainly 
 ```python run_large_graph.py --dataset ogbl-collab --K 3 --lr 0.0004 --hidden 512 --batch_size 16384 --model yinyang --dropout 0.2 --num_neg 3 --epochs 800 --prop_step 6 --lam0 0.01 --lam 1 --alp 1  --filter_year 2010 --contain_valid_edge --train_valid_edge --gpu 0 --seed 3``` 
 
 ```python run_large_graph.py --dataset ogbl-ddi --K 1 --lr 0.001 --hidden 1024 --batch_size 8192 --model yinyang --dropout 0.6 --num_neg 6 --epochs 300 --prop_step 2 --lam0 0.01 --step_lr_decay --as_decoder_input --gpu 0 --seed 9 ``` 
+
+```python GCNmodel.py --dataset ogbl-ddi --lr 0.001 --hidden 1024 --batch_size 8192 --dropout 0.6 --num_neg 6 --epochs 300 --prop_step 2 --metric hits@20```
+
+```python GCNmodel.py --dataset ogbl-collab --lr 0.0004 --hidden 512 --batch_size 16384 --dropout 0.2 --num_neg 3 --epochs 800 --prop_step 6 --metric hits@50```
+
+```python GCNmodel.py --dataset ogbl-ppa --lr 0.005 --hidden 128 --batch_size 65536 --dropout 0.2 --num_neg 6 --epochs 300 --prop_step 2 --metric hits@100```
+
+```python GCNmodel.py --dataset ogbl-citation2 --lr 0.003 --hidden 128 --batch_size 131072 -- dropout 0 --num_neg 6 --epochs 200 --prop_step 3 --metric MRR```
