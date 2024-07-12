@@ -30,6 +30,7 @@ def parse():
     parser.add_argument("--filter_year", default=2010, type=int)
     parser.add_argument("--gpu", default=0, type=int)
     parser.add_argument("--relu", action='store_true', default=False)
+    parser.add_argument("--no_para", action='store_true', default=False)
     args = parser.parse_args()
     return args
 
@@ -63,8 +64,29 @@ class GCN(nn.Module):
     def forward(self, g, in_feat):
         h = self.conv1(g, in_feat)
         for i in range(1, args.prop_step):
-            h = F.relu(h)
+            if args.relu:
+                h = F.relu(h)
             h = self.conv2(g, h)
+        return h
+    
+class GCN_no_para(nn.Module):
+    def __init__(self, in_feats, h_feats):
+        super(GCN_no_para, self).__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(in_feats, h_feats),
+            nn.BatchNorm1d(h_feats),
+            nn.Dropout(args.dropout),
+            nn.ReLU(),
+            nn.Linear(h_feats, h_feats)
+        )
+        self.conv = GraphConv(h_feats, h_feats, weight=False, bias=False)
+
+    def forward(self, g, in_feat):
+        h = self.mlp(in_feat)
+        for i in range(args.prop_step):
+            if args.relu:
+                h = F.relu(h)
+            h = self.conv(g, h)
         return h
 
 def train(model, g, train_pos_edge, optimizer, neg_sampler, pred):
@@ -210,7 +232,10 @@ if args.dataset == 'ogbl-ddi' or dataset.name == 'ogbl-ppa':
     torch.nn.init.xavier_uniform_(embedding.weight)
     graph.ndata['feat'] = embedding.weight
 
-model = GCN(in_feats=graph.ndata['feat'].shape[1], h_feats=args.hidden).to(device)
+if args.no_para:
+    model = GCN_no_para(in_feats=graph.ndata['feat'].shape[1], h_feats=args.hidden).to(device)
+else:
+    model = GCN(in_feats=graph.ndata['feat'].shape[1], h_feats=args.hidden).to(device)
 if args.dataset == 'ogbl-ddi' or dataset.name == 'ogbl-ppa':
     parameter = itertools.chain(model.parameters(), pred.parameters(), embedding.parameters())
 else:

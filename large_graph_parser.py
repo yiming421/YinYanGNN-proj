@@ -52,6 +52,7 @@ def parse():
     parser.add_argument("--c4", default=1, type=int)
     parser.add_argument("--c5", default=0, type=int)
     parser.add_argument("--sigma", default=1, type=float)
+    parser.add_argument("--fixed", default=False, action ='store_true')
     args = parser.parse_args()
     args.mlp = not args.nomlp
     return args
