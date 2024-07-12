@@ -286,29 +286,48 @@ if args.dataset =="ogbl-citation2":
 valid_list=[]
 test_list=[]
 
+def negative_sampling(g):
+    num_nodes = g.number_of_nodes()
+    num_edges = g.num_edges()
+    k = num_edges // num_nodes
+    src_nodes = torch.arange(num_nodes).repeat_interleave(k)
+    rand_nodes = torch.randperm(num_nodes)[:k]
+    dst_nodes = rand_nodes.repeat(num_nodes)
+    neg_g = dgl.graph((src_nodes, dst_nodes), num_nodes = num_nodes)
+    neg_g = dgl.to_bidirected(neg_g, True)
+    neg_g = dgl.remove_self_loop(neg_g)
+    print(neg_g.num_edges, flush = True)
+    g = g.to(device)
+    neg_g = neg_g.to(device)
+    return neg_g
+
 best_test_results = 0
-for epoch in range(args.epochs):
+neg_g = None
 
-    if negative_graph_sampler:
-        g = g.to('cpu')
-        if args.uniform:
-            neg_g = negative_graph_sampler(g, torch.LongTensor(range(g.num_edges())))
-            neg_g = dgl.graph(neg_g, num_nodes=g.number_of_nodes())
-            neg_g = dgl.to_bidirected(neg_g, True)
-            neg_g = neg_g.to(device)
-        else:
-            if args.split_negs:
-                neg_g = []
-                for i in range(args.K):
-                    neg_g.append(negative_graph_sampler(g, torch.LongTensor(range(g.num_edges()))).to(device))
-            else:
-                neg_g = negative_graph_sampler(g, torch.LongTensor(range(g.num_edges())))
-                neg_g = neg_g.to(device)
-        g = g.to(device)
-
+if negative_graph_sampler:
+    g = g.to('cpu')
+    if args.uniform:
+        neg_g = negative_graph_sampler(g, torch.LongTensor(range(g.num_edges())))
+        neg_g = dgl.graph(neg_g, num_nodes=g.number_of_nodes())
+        neg_g = dgl.to_bidirected(neg_g, True)
+        neg_g = neg_g.to(device)
+    if args.fixed:
+        neg_g = negative_sampling(g)
     else:
-        g = g.to(device)
-        neg_g = None
+        if args.split_negs:
+            neg_g = []
+            for i in range(args.K):
+                neg_g.append(negative_graph_sampler(g, torch.LongTensor(range(g.num_edges()))).to(device))
+        else:
+            neg_g = negative_graph_sampler(g, torch.LongTensor(range(g.num_edges())))
+            neg_g = neg_g.to(device)
+    g = g.to(device)
+
+else:
+    g = g.to(device)
+    neg_g = None
+
+for epoch in range(args.epochs):
 
     pos_train_edge = split_edge['train']['edge'].to(device)
     if args.loss_negtype=="source":
@@ -519,11 +538,6 @@ for epoch in range(args.epochs):
                 print('epoch: {}, dev_hits100: {}, test_hits100: {}, loss: {}'.format(epoch, dev_hits100, test_hits100, loss))
             else:
                 print('epoch: {}, dev_hits50: {}, test_hits50: {}, loss: {}'.format(epoch, dev_hits50, test_hits50, loss))
-                
-                
-        
-        if neg_g is not None:
-            del neg_g
 
 # model.eval()
 # pred.eval()
