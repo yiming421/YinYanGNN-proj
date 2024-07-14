@@ -69,7 +69,13 @@ class Propagate(nn.Module):
             Y_new =  c1 * (Y - alp * lam0 * Y / (D_0 + D_1) - alp * lam* Y + alp * lam_K * 1/K * Y) \
                    + c2 * (alp * lam0 * X / (D_0 + D_1)) + c3 * (alp * lam * normalized_AX(graph[0], Y)) + c4 * (-alp * lam_K * 1/K * normalized_AX(graph[1], Y)) \
                    + c5 * noise
+            
+            '''print(th.norm(Y - alp * lam0 * Y / (D_0 + D_1) - alp * lam* Y + alp * lam_K * 1/K * Y), flush = True)
+            print(th.norm(alp * lam0 * X / (D_0 + D_1)), flush = True)
+            print(th.norm(alp * lam * normalized_AX(graph[0], Y)), flush=True)
+            print(th.norm(alp * lam_K * 1/K * normalized_AX(graph[1], Y)), flush = True)'''
             # Y_new = Y - alp * ( lam0 * (Y - X) / (D_0 + D_1) + lam * (Y - normalized_AX(graph[0], Y))- lam_K * 1/K * (Y - normalized_AX(graph[1], Y)))
+            
             return Y_new
         else:
             D_0 = D_list[0]

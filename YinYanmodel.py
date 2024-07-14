@@ -8,7 +8,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from ogb.linkproppred import DglLinkPropPredDataset, Evaluator
 from dgl.nn.pytorch import GraphConv
-from dgl.dataloading.negative_sampler import GlobalUniform
+from dgl.dataloading.negative_sampler import GlobalUniform, PerSourceUniform
+import dgl.function as fn
 from torch.utils.data import DataLoader
 import tqdm
 import argparse
@@ -16,26 +17,33 @@ import argparse
 def parse():
     
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", default='ogbl-citation2', choices=['ogbl-collab', 'ogbl-ddi', 'ogbl-ppa', 'ogbl-citation2', 'ogbl-vessel'], type=str)
-    parser.add_argument("--lr", default=0.01, type=float)
-    parser.add_argument("--prop_step", default=8, type=int)
-    parser.add_argument("--hidden", default=32, type=int)
+    parser.add_argument("--dataset", default='ogbl-ddi', choices=['ogbl-collab', 'ogbl-ddi', 'ogbl-ppa', 'ogbl-citation2', 'ogbl-vessel'], type=str)
+    parser.add_argument("--lr", default=0.001, type=float)
+    parser.add_argument("--prop_step", default=2, type=int)
+    parser.add_argument("--hidden", default=1024, type=int)
     parser.add_argument("--batch_size", default=8192, type=int)
-    parser.add_argument("--dropout", default=0.05, type=float)
-    parser.add_argument("--num_neg", default=1, type=int)
-    parser.add_argument("--epochs", default=50, type=int)
+    parser.add_argument("--dropout", default=0.6, type=float)
+    parser.add_argument("--num_neg", default=6, type=int)
+    parser.add_argument("--epochs", default=300, type=int)
     parser.add_argument("--interval", default=50, type=int)
-    parser.add_argument("--step_lr_decay", action='store_true', default=False)
+    parser.add_argument("--step_lr_decay", action='store_true', default=True)
     parser.add_argument("--metric", default='hits@20', type=str)
     parser.add_argument("--filter_year", default=2010, type=int)
     parser.add_argument("--gpu", default=0, type=int)
     parser.add_argument("--relu", action='store_true', default=False)
-    parser.add_argument("--model", default='GCN', choices=['GCN', 'YinYanGNN'], type=str)
-    parser.add_argument("K", default=1, type=int)
+    parser.add_argument("--model", default='YinYanGNN', choices=['GCN', 'YinYanGNN'], type=str)
+    parser.add_argument("--K", default=1, type=int)
+    parser.add_argument("--seed", default=9, type=int)
     args = parser.parse_args()
     return args
 
 args = parse()
+print(args)
+
+seed = args.seed
+torch.manual_seed(seed)
+torch.cuda.manual_seed_all(seed)
+dgl.seed(seed)
 
 def adjustlr(optimizer, decay_ratio, lr):
     lr_ = lr * max(1 - decay_ratio, 0.0001)
@@ -69,25 +77,51 @@ class GCN(nn.Module):
                 h = F.relu(h)
             h = self.conv2(g, h)
         return h
+
+def normalized_AX(graph, X):
+    """Y = D^{-1/2}AD^{-1/2}X"""
+    Y = D_power_X(graph, X, -0.5)  # Y = D^{-1/2}X
+    Y = AX(graph, Y)  # Y = AD^{-1/2}X
+    Y = D_power_X(graph, Y, -0.5)  # Y = D^{-1/2}AD^{-1/2}X
+    return Y
+
+def AX(graph, X):
+    """Y = AX"""
+    graph.srcdata["h"] = X
+    graph.update_all(
+        fn.u_mul_e("h", "w", "m"), fn.sum("m", "h"),
+    )
+    Y = graph.dstdata["h"]
+    return Y
+
+def D_power_X(graph, X, power):
+    """Y = D^{power}X"""
+    degs = graph.ndata["deg"]
+    norm = torch.pow(degs, power)
+    norm[norm == float('inf')] = 0
+    norm[norm == float('-inf')] = 0 
+    Y = X * norm.view(X.size(0), 1)
+    return Y
     
 class YinYanGNN(nn.Module):
     def __init__(self, in_feats, h_feats):
         super(YinYanGNN, self).__init__()
         self.mlp = nn.Sequential(
-            nn.Linear(in_feats, h_feats),
+            nn.Linear(in_feats, h_feats, bias = False),
             nn.BatchNorm1d(h_feats),
             nn.Dropout(args.dropout),
             nn.ReLU(),
-            nn.Linear(h_feats, h_feats)
+            nn.Linear(h_feats, h_feats, bias = False),
         )
-        self.conv = GraphConv(h_feats, h_feats, weight=False, bias=False)
 
     def forward(self, g, neg_g, in_feat):
-        ori_h = self.mlp(in_feat)
+        D_0, D_1 = g.ndata['deg'].view(-1, 1), neg_g.ndata['deg'].view(-1, 1)
+        h = self.mlp(in_feat)
+        ori_h = h
         for i in range(args.prop_step):
             if args.relu:
                 h = F.relu(h)
-            h = self.conv(g, h) - self.conv(neg_g, h) + ori_h
+            h = h - 0.01 * h / (D_0 + D_1) +  0.01 * ori_h / (D_0 + D_1) + normalized_AX(g, h) - normalized_AX(neg_g, h)
         return h
 
 def train(model, g, neg_g, train_pos_edge, optimizer, neg_sampler, pred):
@@ -125,8 +159,8 @@ def train(model, g, neg_g, train_pos_edge, optimizer, neg_sampler, pred):
     return total_loss / len(dataloader)
 
 def test(model, g, neg_g, pos_test_edge, neg_test_edge, evaluator, pred):
-    model.train()
-    pred.train()
+    model.eval()
+    pred.eval()
 
     with torch.no_grad():
         if args.model == 'YinYanGNN':
@@ -215,7 +249,7 @@ split_edge = dataset.get_edge_split()
 device = torch.device('cuda', args.gpu) if torch.cuda.is_available() else torch.device('cpu')
 
 graph = dataset[0]
-graph = dgl.add_self_loop(graph)
+graph = graph.add_self_loop()
 graph = dgl.to_bidirected(graph, copy_ndata=True).to(device)
 
 if args.dataset =="ogbl-citation2":
@@ -265,17 +299,25 @@ best_val = 0
 final_test_result = None
 best_epoch = 0
 
+losses = []
+valid_list = []
+test_list = []
 
 for epoch in range(args.epochs):
     if args.model == 'YinYanGNN':
-        g = g.to('cpu')
-        neg_prop_edge = neg_sampler(g, torch.LongTensor(range(g.num_edges())))
-        neg_g = dgl.graph(neg_prop_edge, num_nodes=g.num_nodes())
+        graph = graph.to('cpu')
+        graph.ndata['deg'] = graph.in_degrees().float()
+        graph.edata['w'] = torch.ones(graph.num_edges(), 1)
+        train_neg_sampler = PerSourceUniform(args.K)
+        neg_g = train_neg_sampler(graph, torch.LongTensor(range(graph.num_edges())))
+        neg_g = dgl.graph(neg_g, num_nodes=graph.num_nodes())
         neg_g = dgl.to_bidirected(neg_g, copy_ndata=True)
+        neg_g.ndata['deg'] = neg_g.in_degrees().float()
+        neg_g.edata['w'] = torch.ones(neg_g.num_edges(), 1)
         neg_g = neg_g.to(device)
-        g = g.to(device)
+        graph = graph.to(device)
     elif args.model == 'GCN':
-        g = g.to(device)
+        graph = graph.to(device)
     else:
         raise NotImplementedError
     loss = train(model, graph, neg_g, train_pos_edge, optimizer, neg_sampler, pred)
@@ -300,6 +342,23 @@ for epoch in range(args.epochs):
     elif args.dataset == 'ogbl-citation2' or args.dataset == 'ogbl-ppa':
         if epoch - best_epoch >= 100:
             break
+    losses.append(loss)
+    valid_list.append(valid_results[args.metric])
+    test_list.append(test_results[args.metric])
     print(f"Epoch {epoch}, Loss: {loss:.4f}, Validation hit: {valid_results[args.metric]:.4f}, Test hit: {test_results[args.metric]:.4f}")
+    if args.model == 'YinYanGNN':
+        del neg_g
 
 print(f"Test hit: {final_test_result[args.metric]:.4f}")
+
+
+import matplotlib.pyplot as plt
+
+plt.figure()
+plt.plot(range(args.epochs), losses, label='loss')
+plt.plot(range(args.epochs), valid_list, label='valid')
+plt.plot(range(args.epochs), test_list, label='test')
+plt.xlabel('epoch')
+plt.ylabel('metric')
+plt.legend()
+plt.show()

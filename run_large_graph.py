@@ -283,6 +283,8 @@ if args.dataset =="ogbl-citation2":
         v=split_edge[name]["target_node"]
         split_edge[name]['edge']=torch.stack((u,v),dim=0).t()
 
+
+losses = []
 valid_list=[]
 test_list=[]
 
@@ -319,6 +321,7 @@ if negative_graph_sampler:
             for i in range(args.K):
                 neg_g.append(negative_graph_sampler(g, torch.LongTensor(range(g.num_edges()))).to(device))
         else:
+            print("using uniform and bidirect", flush = True)
             neg_g = negative_graph_sampler(g, torch.LongTensor(range(g.num_edges())))
             neg_g = neg_g.to(device)
     g = g.to(device)
@@ -383,7 +386,7 @@ for epoch in range(args.epochs):
 
         loss = compute_loss(pos_score, neg_score)
 
-
+        losses.append(loss.item())
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -392,6 +395,7 @@ for epoch in range(args.epochs):
             torch.nn.utils.clip_grad_norm_(x, 1.0)
         elif args.dataset=="ogbl-citation2" or args.dataset=="ogbl-collab":
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            
             torch.nn.utils.clip_grad_norm_(pred.parameters(), 1.0)
 
     if args.step_lr_decay and epoch % args.interval == 0:
@@ -571,9 +575,17 @@ else:
 
     print('Final Valid_Hits: {}, Test_Hits: {}'.format(valid_res, test_res))
 
-with open('result.txt', 'a') as f:
-    f.write('Final Valid_Hits: {}, Test_Hits: {}\n'.format(valid_res, test_res))
-f.close()
+import matplotlib.pyplot as plt
+
+plt.figure()
+plt.plot(range(args.epochs), losses, label='loss')
+plt.plot(range(args.epochs), valid_list, label='valid')
+plt.plot(range(args.epochs), test_list, label='test')
+plt.xlabel('epoch')
+plt.ylabel('metric')
+plt.legend()
+plt.show()
+
 
 
     

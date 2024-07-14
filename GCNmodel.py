@@ -31,10 +31,16 @@ def parse():
     parser.add_argument("--gpu", default=0, type=int)
     parser.add_argument("--relu", action='store_true', default=False)
     parser.add_argument("--no_para", action='store_true', default=False)
+    parser.add_argument("--seed", default=0, type=int)
     args = parser.parse_args()
     return args
 
 args = parse()
+print(args)
+
+torch.manual_seed(args.seed)
+torch.cuda.manual_seed(args.seed)
+dgl.seed(args.seed)
 
 def adjustlr(optimizer, decay_ratio, lr):
     lr_ = lr * max(1 - decay_ratio, 0.0001)
@@ -118,8 +124,8 @@ def train(model, g, train_pos_edge, optimizer, neg_sampler, pred):
     return total_loss / len(dataloader)
 
 def test(model, g, pos_test_edge, neg_test_edge, evaluator, pred):
-    model.train()
-    pred.train()
+    model.eval()
+    pred.eval()
 
     with torch.no_grad():
         h = model(g, g.ndata['feat'])
